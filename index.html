@@ -1,0 +1,235 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Neon Dodge</title>
+<style>
+*{box-sizing:border-box}
+body{
+ margin:0;background:#080b18;color:#fff;
+ font-family:Arial,sans-serif;min-height:100vh;
+ display:flex;justify-content:center;align-items:center;
+ padding:16px;overflow:hidden;touch-action:pan-y
+}
+.app{width:100%;max-width:440px;text-align:center}
+h1{font-size:36px;margin:0 0 5px;letter-spacing:3px}
+h1 span{color:#00f5ff;text-shadow:0 0 18px #00d9ff}
+.sub{color:#8590b2;font-size:13px;margin-bottom:18px}
+.stats{display:flex;justify-content:space-between;margin-bottom:12px}
+.stat{background:#11182b;border:1px solid #28314d;
+ padding:10px 18px;border-radius:12px;min-width:45%}
+.stat small{display:block;color:#8290b3;font-size:11px;margin-bottom:5px}
+.stat strong{font-size:23px;color:#00f5ff}
+.game{
+ position:relative;width:100%;height:min(55vh,490px);
+ min-height:300px;background:#0b1022;
+ border:1px solid #293756;border-radius:16px;overflow:hidden;
+ box-shadow:0 0 35px #00c8ff12
+}
+canvas{width:100%;height:100%;display:block}
+.overlay{
+ position:absolute;inset:0;background:#080b18cc;
+ display:flex;flex-direction:column;align-items:center;
+ justify-content:center;padding:24px
+}
+.overlay.hidden{display:none}
+.overlay h2{font-size:29px;margin:0 0 10px}
+.overlay p{color:#a4b0cf;line-height:1.6;font-size:14px}
+button{
+ border:0;border-radius:12px;padding:14px 25px;
+ font-size:15px;font-weight:bold;cursor:pointer
+}
+.start{background:#00f5ff;color:#07101a;box-shadow:0 0 22px #00f5ff40}
+.controls{display:flex;justify-content:center;gap:28px;margin-top:16px}
+.move{
+ width:90px;height:57px;background:#141e36;color:#00f5ff;
+ border:1px solid #31415f;font-size:25px;touch-action:none;
+ user-select:none;-webkit-user-select:none
+}
+.hint{color:#7583a8;font-size:12px;margin-top:14px;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="app">
+ <h1>NEON <span>DODGE</span></h1>
+ <div class="sub">DODGE THE BLOCKS. BEAT YOUR RECORD.</div>
+
+ <div class="stats">
+  <div class="stat"><small>SCORE</small><strong id="score">0</strong></div>
+  <div class="stat"><small>BEST</small><strong id="best">0</strong></div>
+ </div>
+
+ <div class="game" id="game">
+  <canvas id="canvas"></canvas>
+  <div class="overlay" id="overlay">
+   <h2 id="message">Ready?</h2>
+   <p id="description">Avoid the falling blocks and survive as long as you can.</p>
+   <button class="start" id="start">START GAME</button>
+  </div>
+ </div>
+
+ <div class="controls">
+  <button class="move" id="left" aria-label="Move left">◀</button>
+  <button class="move" id="right" aria-label="Move right">▶</button>
+ </div>
+ <div class="hint">USE ← → ARROW KEYS OR TOUCH CONTROLS<br>Survive longer to increase your score.</div>
+</div>
+
+<script>
+const canvas=document.getElementById("canvas");
+const ctx=canvas.getContext("2d");
+const game=document.getElementById("game");
+const overlay=document.getElementById("overlay");
+const scoreEl=document.getElementById("score");
+const bestEl=document.getElementById("best");
+const startBtn=document.getElementById("start");
+
+let W=360,H=500,player,blocks,particles;
+let score=0,best=0,running=false,over=false;
+let last=0,spawn=0,animation=0;
+let left=false,right=false,keys={};
+
+try{best=Number(localStorage.getItem("neonBest"))||0}catch(e){}
+bestEl.textContent=best;
+
+function resize(){
+ const r=game.getBoundingClientRect();
+ const dpr=Math.min(window.devicePixelRatio||1,2);
+ W=r.width;H=r.height;
+ canvas.width=Math.round(W*dpr);
+ canvas.height=Math.round(H*dpr);
+ ctx.setTransform(dpr,0,0,dpr,0,0);
+ draw();
+}
+window.addEventListener("resize",resize);
+
+function reset(){
+ score=0;spawn=0;last=0;over=false;
+ player={x:W/2-15,y:H-65,w:30,h:30,speed:W*0.85};
+ blocks=[];particles=[];
+ scoreEl.textContent="0";
+}
+
+function start(){
+ cancelAnimationFrame(animation);
+ reset();running=true;
+ overlay.classList.add("hidden");
+ last=performance.now();
+ animation=requestAnimationFrame(loop);
+}
+
+function endGame(){
+ running=false;over=true;
+ if(score>best){
+  best=score;bestEl.textContent=best;
+  try{localStorage.setItem("neonBest",best)}catch(e){}
+ }
+ document.getElementById("message").textContent="GAME OVER";
+ document.getElementById("description").textContent=
+ "Your score: "+score+" • Best: "+best;
+ startBtn.textContent="PLAY AGAIN";
+ overlay.classList.remove("hidden");
+ draw();
+}
+
+startBtn.addEventListener("click",start);
+
+function addBlock(){
+ const size=18+Math.random()*25;
+ blocks.push({
+  x:Math.random()*(W-size),y:-size,w:size,h:size,
+  speed:150+Math.random()*100+score*1.5,
+  hue:Math.random()>.5?185:310
+ });
+}
+
+function draw(){
+ ctx.clearRect(0,0,W,H);
+ ctx.fillStyle="#0b1022";ctx.fillRect(0,0,W,H);
+
+ // Neon grid
+ ctx.strokeStyle="#182442";ctx.lineWidth=1;
+ for(let x=0;x<W;x+=30){
+  ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();
+ }
+ for(let y=0;y<H;y+=30){
+  ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();
+ }
+
+ // Falling obstacles
+ for(const b of blocks){
+  ctx.shadowBlur=14;
+  ctx.shadowColor=`hsl(${b.hue},100%,60%)`;
+  ctx.fillStyle=`hsl(${b.hue},100%,58%)`;
+  ctx.fillRect(b.x,b.y,b.w,b.h);
+ }
+ ctx.shadowBlur=0;
+
+ if(player){
+  ctx.save();
+  ctx.shadowBlur=22;ctx.shadowColor="#00f5ff";
+  ctx.fillStyle="#00f5ff";
+  ctx.beginPath();
+  ctx.moveTo(player.x+player.w/2,player.y);
+  ctx.lineTo(player.x+player.w,player.y+player.h);
+  ctx.lineTo(player.x,player.y+player.h);
+  ctx.closePath();ctx.fill();
+  ctx.restore();
+ }
+}
+
+function loop(now){
+ if(!running)return;
+ const dt=Math.min((now-last)/1000,.035);
+ last=now;
+
+ if(left||keys.ArrowLeft||keys.a||keys.A)player.x-=player.speed*dt;
+ if(right||keys.ArrowRight||keys.d||keys.D)player.x+=player.speed*dt;
+ player.x=Math.max(0,Math.min(W-player.w,player.x));
+
+ spawn+=dt;
+ const interval=Math.max(.22,.72-score*.003);
+ if(spawn>interval){spawn=0;addBlock()}
+
+ for(let i=blocks.length-1;i>=0;i--){
+  const b=blocks[i];b.y+=b.speed*dt;
+  if(player.x<b.x+b.w&&player.x+player.w>b.x&&
+     player.y<b.y+b.h&&player.y+player.h>b.y){
+   endGame();return;
+  }
+  if(b.y>H){blocks.splice(i,1);score++}
+ }
+ scoreEl.textContent=score;
+ draw();
+ animation=requestAnimationFrame(loop);
+}
+
+function hold(button,side){
+ const down=e=>{e.preventDefault();if(side==="left")left=true;else right=true};
+ const up=e=>{e.preventDefault();if(side==="left")left=false;else right=false};
+ button.addEventListener("pointerdown",down);
+ button.addEventListener("pointerup",up);
+ button.addEventListener("pointercancel",up);
+ button.addEventListener("pointerleave",up);
+}
+hold(document.getElementById("left"),"left");
+hold(document.getElementById("right"),"right");
+
+window.addEventListener("keydown",e=>{
+ if(["ArrowLeft","ArrowRight"," "].includes(e.key))e.preventDefault();
+ keys[e.key]=true;
+ if(e.key===" "&&!running)start();
+});
+window.addEventListener("keyup",e=>{keys[e.key]=false});
+window.addEventListener("blur",()=>{
+ left=false;right=false;keys={};
+});
+
+resize();
+reset();
+draw();
+</script>
+</body>
+</html>
